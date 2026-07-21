@@ -1,0 +1,33 @@
+name: Apple WLOC 虚拟定位
+desc: "修改 Apple 网络定位返回坐标 | 选点页面: https://apple-wloc.<你的域名>.workers.dev"
+author: Hawaiine
+homepage: https://github.com/Hawaiine/apple-wloc
+icon: https://raw.githubusercontent.com/Hawaiine/apple-wloc/refs/heads/main/wloc.jpg
+category: Tools
+
+http:
+  mitm:
+    - "gs-loc.apple.com"
+    - "gs-loc-cn.apple.com"
+  script:
+    - match: ^https?:\/\/gs-loc(-cn)?\.apple\.com\/clls\/wloc
+      name: WLOC.Location
+      type: response
+      require-body: true
+      binary-mode: true
+      max-size: 0
+      timeout: 30
+      argument: longitude=-121.89501&latitude=37.339401&accuracy=25&logLevel=info
+    - match: ^https?:\/\/gs-loc(-cn)?\.apple\.com\/wloc-settings\/save
+      name: WLOC.Settings
+      type: request
+      require-body: false
+      timeout: 10
+
+script-providers:
+  WLOC.Location:
+    url: https://raw.githubusercontent.com/Hawaiine/apple-wloc/refs/heads/main/dist/wloc.js
+    interval: 86400
+  WLOC.Settings:
+    url: https://raw.githubusercontent.com/Hawaiine/apple-wloc/refs/heads/main/dist/wloc-settings.js
+    interval: 86400
