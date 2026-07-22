@@ -11,7 +11,7 @@ http:
       binary-mode: true
       max-size: 1048576
       timeout: 10
-      argument: mode=response&latitude=37.3394&longitude=-121.89501&horizontalAccuracy=39&verticalAccuracy=1000&altitude=515&debug=false
+      argument: mode=response&latitude=37.3394&longitude=-121.89502&horizontalAccuracy=39&verticalAccuracy=1000&altitude=515&debug=false
   mitm:
     - gs-loc.apple.com
     - gs-loc-cn.apple.com
@@ -21,5 +21,5 @@ http:
 
 script-providers:
   ios-location-spoofer:
-    url: https://raw.githubusercontent.com/kun775/ios-location-spoofer/main/location-spoofer.js
+    url: https://raw.githubusercontent.com/batqwq/shadowrocket-location-spoofer/main/location-spoofer.js
     interval: 86400
