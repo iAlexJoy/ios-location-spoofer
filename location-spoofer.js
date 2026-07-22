@@ -1,10 +1,10 @@
 /*
- * 拦截 Apple /clls/wloc 接口的回应，解 ARPC 封包，改 WiFi 热点和基站坐标，
- * 再按 Apple 的格式封回去返回给系统。
+ * Chặn phản hồi từ giao diện Apple /clls/wloc, giải mã gói ARPC, sửa đổi tọa độ điểm truy cập WiFi và trạm gốc,
+ * sau đó đóng gói lại theo định dạng của Apple và trả về hệ thống.
  *
- * 主要流程：
- *   ARPC 拆包 → protobuf 解字段 → 替换 Location 子消息的坐标/精度/运动状态
- *   → protobuf 重新打包 → 按原格式（ARPC / marker / synthetic）封回
+ * Quy trình chính:
+ *   Giải mã gói ARPC → Giải mã trường protobuf → Thay thế tọa độ/độ chính xác/trạng thái chuyển động của thông điệp phụ Vị trí
+ *   → Đóng gói lại protobuf → Đóng gói lại theo định dạng gốc (ARPC / marker / synthetic)
  */
 (function () {
   "use strict";
@@ -25,12 +25,14 @@
     dumpRaw: false,
     dumpHeaders: false,
     prepareHeaders: false,
-    rawLimit: 0
+    rawLimit: 0,
   };
 
   // Prefix prepended to a SPOOFED (synthesized) response. Mirrors the original Go
   // `initialBytes = 0001000000010000` from main.go:253.
-  var APPLE_WLOC_PREFIX = bytesFromArray([0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00]);
+  var APPLE_WLOC_PREFIX = bytesFromArray([
+    0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+  ]);
 
   // Stable marker that precedes the AppleWLoc protobuf inside a REAL Apple /clls/wloc
   // response. After the marker come 2 bytes (uint16 BE payload length) then the payload.
@@ -45,7 +47,7 @@
     5: true,
     6: true,
     11: true,
-    12: true
+    12: true,
   };
 
   function bytesFromArray(values) {
@@ -127,13 +129,16 @@
     var chunks = [];
     for (var i = 0; i < bytes.length; i += chunkSize) {
       var chunk = bytes.subarray(i, i + chunkSize);
-      chunks.push(String.fromCharCode.apply(null, Array.prototype.slice.call(chunk)));
+      chunks.push(
+        String.fromCharCode.apply(null, Array.prototype.slice.call(chunk)),
+      );
     }
     return chunks.join("");
   }
 
   function bytesToBase64(bytes) {
-    var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var alphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     var out = "";
     for (var i = 0; i < bytes.length; i += 3) {
       var b0 = bytes[i];
@@ -176,10 +181,18 @@
     if (typeof body === "object" && typeof body.length === "number") {
       return new Uint8Array(body);
     }
-    if (typeof body === "object" && body.bytes && typeof body.bytes.length === "number") {
+    if (
+      typeof body === "object" &&
+      body.bytes &&
+      typeof body.bytes.length === "number"
+    ) {
       return new Uint8Array(body.bytes);
     }
-    if (typeof body === "object" && body.data && typeof body.data.length === "number") {
+    if (
+      typeof body === "object" &&
+      body.data &&
+      typeof body.data.length === "number"
+    ) {
       return new Uint8Array(body.data);
     }
     return null;
@@ -209,9 +222,12 @@
       throw new Error("uint32 out of range");
     }
     return (
-      (bytes[offset] * 0x1000000) +
-      ((bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3])
-    ) >>> 0;
+      (bytes[offset] * 0x1000000 +
+        ((bytes[offset + 1] << 16) |
+          (bytes[offset + 2] << 8) |
+          bytes[offset + 3])) >>>
+      0
+    );
   }
 
   function writeUInt16BE(value) {
@@ -226,7 +242,7 @@
       (value >>> 24) & 0xff,
       (value >>> 16) & 0xff,
       (value >>> 8) & 0xff,
-      value & 0xff
+      value & 0xff,
     ]);
   }
 
@@ -287,11 +303,18 @@
   }
 
   function makeVarintField(fieldNumber, value) {
-    return concatBytes([makeKey(fieldNumber, 0), encodeVarintSignedInt64(value)]);
+    return concatBytes([
+      makeKey(fieldNumber, 0),
+      encodeVarintSignedInt64(value),
+    ]);
   }
 
   function makeLengthDelimitedField(fieldNumber, payload) {
-    return concatBytes([makeKey(fieldNumber, 2), encodeVarintUnsigned(payload.length), payload]);
+    return concatBytes([
+      makeKey(fieldNumber, 2),
+      encodeVarintUnsigned(payload.length),
+      payload,
+    ]);
   }
 
   function parseFields(bytes) {
@@ -338,7 +361,7 @@
         valueEnd: valueEnd,
         end: valueEnd,
         raw: bytes.slice(keyStart, valueEnd),
-        valueBytes: bytes.slice(valueStart, valueEnd)
+        valueBytes: bytes.slice(valueStart, valueEnd),
       });
       offset = valueEnd;
     }
@@ -370,7 +393,11 @@
       if (lat == null || lon == null) {
         return "<missing>";
       }
-      return (Number(lat) / 100000000).toFixed(8) + "," + (Number(lon) / 100000000).toFixed(8);
+      return (
+        (Number(lat) / 100000000).toFixed(8) +
+        "," +
+        (Number(lon) / 100000000).toFixed(8)
+      );
     } catch (err) {
       return "<parse-failed:" + err.message + ">";
     }
@@ -383,12 +410,22 @@
       var wifi = firstFieldByNumber(rootFields, 2);
       if (wifi && wifi.wireType === 2) {
         var wifiLocation = firstFieldByNumber(parseFields(wifi.valueBytes), 2);
-        parts.push("firstWifi=" + (wifiLocation ? locationSummary(wifiLocation.valueBytes) : "<missing>"));
+        parts.push(
+          "firstWifi=" +
+            (wifiLocation
+              ? locationSummary(wifiLocation.valueBytes)
+              : "<missing>"),
+        );
       }
       var cell = firstCellResponseField(rootFields);
       if (cell && cell.wireType === 2) {
         var cellLocation = firstFieldByNumber(parseFields(cell.valueBytes), 5);
-        parts.push("firstCell=" + (cellLocation ? locationSummary(cellLocation.valueBytes) : "<missing>"));
+        parts.push(
+          "firstCell=" +
+            (cellLocation
+              ? locationSummary(cellLocation.valueBytes)
+              : "<missing>"),
+        );
       }
       return parts.length ? parts.join(", ") : "no wifi/cell location fields";
     } catch (err) {
@@ -420,10 +457,20 @@
     }
     if (typeof value === "string") {
       var normalized = value.trim().toLowerCase();
-      if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+      if (
+        normalized === "true" ||
+        normalized === "1" ||
+        normalized === "yes" ||
+        normalized === "on"
+      ) {
         return true;
       }
-      if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+      if (
+        normalized === "false" ||
+        normalized === "0" ||
+        normalized === "no" ||
+        normalized === "off"
+      ) {
         return false;
       }
     }
@@ -448,7 +495,13 @@
     cfg.enabled = parseBoolean(cfg.enabled, true);
     cfg.failOpen = parseBoolean(cfg.failOpen, true);
     var mode = String(cfg.mode || "response").toLowerCase();
-    cfg.mode = mode === "request" || mode === "prepare" || mode === "probe" || mode === "inspect" ? mode : "response";
+    cfg.mode =
+      mode === "request" ||
+      mode === "prepare" ||
+      mode === "probe" ||
+      mode === "inspect"
+        ? mode
+        : "response";
     cfg.latitude = Number(cfg.latitude);
     cfg.longitude = Number(cfg.longitude);
     cfg.horizontalAccuracy = Math.trunc(Number(cfg.horizontalAccuracy));
@@ -456,19 +509,34 @@
     cfg.altitude = Math.trunc(Number(cfg.altitude));
     cfg.unknownValue4 = Math.trunc(Number(cfg.unknownValue4));
     cfg.motionActivityType = Math.trunc(Number(cfg.motionActivityType));
-    cfg.motionActivityConfidence = Math.trunc(Number(cfg.motionActivityConfidence));
-    cfg.dumpRaw = cfg.dumpRaw === true || String(cfg.dumpRaw).toLowerCase() === "true";
-    cfg.dumpHeaders = cfg.dumpHeaders === true || String(cfg.dumpHeaders).toLowerCase() === "true";
-    cfg.prepareHeaders = cfg.prepareHeaders === true || String(cfg.prepareHeaders).toLowerCase() === "true";
+    cfg.motionActivityConfidence = Math.trunc(
+      Number(cfg.motionActivityConfidence),
+    );
+    cfg.dumpRaw =
+      cfg.dumpRaw === true || String(cfg.dumpRaw).toLowerCase() === "true";
+    cfg.dumpHeaders =
+      cfg.dumpHeaders === true ||
+      String(cfg.dumpHeaders).toLowerCase() === "true";
+    cfg.prepareHeaders =
+      cfg.prepareHeaders === true ||
+      String(cfg.prepareHeaders).toLowerCase() === "true";
     cfg.rawLimit = Math.trunc(Number(cfg.rawLimit || 0));
     if (!Number.isFinite(cfg.rawLimit) || cfg.rawLimit < 0) {
       cfg.rawLimit = 0;
     }
 
-    if (!Number.isFinite(cfg.latitude) || cfg.latitude < -90 || cfg.latitude > 90) {
+    if (
+      !Number.isFinite(cfg.latitude) ||
+      cfg.latitude < -90 ||
+      cfg.latitude > 90
+    ) {
       throw new Error("invalid latitude");
     }
-    if (!Number.isFinite(cfg.longitude) || cfg.longitude < -180 || cfg.longitude > 180) {
+    if (
+      !Number.isFinite(cfg.longitude) ||
+      cfg.longitude < -180 ||
+      cfg.longitude > 180
+    ) {
       throw new Error("invalid longitude");
     }
     return cfg;
@@ -502,7 +570,9 @@
     for (var i = 0; i < fields.length; i += 1) {
       var field = fields[i];
       if (field.fieldNumber === 2 && field.wireType === 2) {
-        parts.push(makeLengthDelimitedField(2, patchLocation(field.valueBytes, config)));
+        parts.push(
+          makeLengthDelimitedField(2, patchLocation(field.valueBytes, config)),
+        );
         patchedLocation = true;
       } else {
         parts.push(field.raw);
@@ -510,7 +580,9 @@
     }
 
     if (!patchedLocation) {
-      parts.push(makeLengthDelimitedField(2, patchLocation(bytesFromArray([]), config)));
+      parts.push(
+        makeLengthDelimitedField(2, patchLocation(bytesFromArray([]), config)),
+      );
     }
 
     return concatBytes(parts);
@@ -524,7 +596,9 @@
     for (var i = 0; i < fields.length; i += 1) {
       var field = fields[i];
       if (field.fieldNumber === 5 && field.wireType === 2) {
-        parts.push(makeLengthDelimitedField(5, patchLocation(field.valueBytes, config)));
+        parts.push(
+          makeLengthDelimitedField(5, patchLocation(field.valueBytes, config)),
+        );
         patchedLocation = true;
       } else {
         parts.push(field.raw);
@@ -532,7 +606,9 @@
     }
 
     if (!patchedLocation) {
-      parts.push(makeLengthDelimitedField(5, patchLocation(bytesFromArray([]), config)));
+      parts.push(
+        makeLengthDelimitedField(5, patchLocation(bytesFromArray([]), config)),
+      );
     }
 
     return concatBytes(parts);
@@ -547,17 +623,34 @@
     for (var i = 0; i < fields.length; i += 1) {
       var field = fields[i];
       if (field.fieldNumber === 2 && field.wireType === 2) {
-        parts.push(makeLengthDelimitedField(2, patchWifiDevice(field.valueBytes, config)));
+        parts.push(
+          makeLengthDelimitedField(
+            2,
+            patchWifiDevice(field.valueBytes, config),
+          ),
+        );
         wifiCount += 1;
-      } else if (isCellResponseField(field.fieldNumber) && field.wireType === 2) {
-        parts.push(makeLengthDelimitedField(field.fieldNumber, patchCellTower(field.valueBytes, config)));
+      } else if (
+        isCellResponseField(field.fieldNumber) &&
+        field.wireType === 2
+      ) {
+        parts.push(
+          makeLengthDelimitedField(
+            field.fieldNumber,
+            patchCellTower(field.valueBytes, config),
+          ),
+        );
         cellCount += 1;
       } else if (!ROOT_DROP_FIELDS[field.fieldNumber]) {
         parts.push(field.raw);
       }
     }
 
-    return { payload: concatBytes(parts), wifiCount: wifiCount, cellCount: cellCount };
+    return {
+      payload: concatBytes(parts),
+      wifiCount: wifiCount,
+      cellCount: cellCount,
+    };
   }
 
   function readPascalString(bytes, state) {
@@ -602,7 +695,7 @@
       appIdentifier: appIdentifier,
       osVersion: osVersion,
       functionId: functionId,
-      payload: bytes.slice(state.offset, state.offset + payloadLength)
+      payload: bytes.slice(state.offset, state.offset + payloadLength),
     };
   }
 
@@ -614,12 +707,16 @@
       writePascalString(arpc.osVersion),
       writeUInt32BE(arpc.functionId),
       writeUInt32BE(arpc.payload.length),
-      arpc.payload
+      arpc.payload,
     ]);
   }
 
   function buildAppleWLocResponse(payload, prefix) {
-    return concatBytes([prefix || APPLE_WLOC_PREFIX, writeUInt16BE(payload.length), payload]);
+    return concatBytes([
+      prefix || APPLE_WLOC_PREFIX,
+      writeUInt16BE(payload.length),
+      payload,
+    ]);
   }
 
   function extractPrefixedAppleWLocPayload(responseBytes) {
@@ -635,11 +732,17 @@
 
     var payloadLength = readUInt16BE(responseBytes, 8);
     var payloadOffset = 10;
-    if (payloadLength <= 0 || payloadOffset + payloadLength > responseBytes.length) {
+    if (
+      payloadLength <= 0 ||
+      payloadOffset + payloadLength > responseBytes.length
+    ) {
       return null;
     }
 
-    var payload = responseBytes.slice(payloadOffset, payloadOffset + payloadLength);
+    var payload = responseBytes.slice(
+      payloadOffset,
+      payloadOffset + payloadLength,
+    );
     if (tryParseFields(payload) === null) {
       return null;
     }
@@ -648,7 +751,7 @@
       kind: "synthetic",
       payload: payload,
       prefix: responseBytes.slice(0, 8),
-      suffix: responseBytes.slice(payloadOffset + payloadLength)
+      suffix: responseBytes.slice(payloadOffset + payloadLength),
     };
   }
 
@@ -683,7 +786,7 @@
         return {
           kind: "arpc",
           payload: arpc.payload,
-          arpc: arpc
+          arpc: arpc,
         };
       }
     } catch (e) {
@@ -698,8 +801,14 @@
       if (lenOffset + 2 <= responseBytes.length) {
         var realLen = readUInt16BE(responseBytes, lenOffset);
         var realPayloadOffset = lenOffset + 2;
-        if (realLen > 0 && realPayloadOffset + realLen <= responseBytes.length) {
-          var candidatePayload = responseBytes.slice(realPayloadOffset, realPayloadOffset + realLen);
+        if (
+          realLen > 0 &&
+          realPayloadOffset + realLen <= responseBytes.length
+        ) {
+          var candidatePayload = responseBytes.slice(
+            realPayloadOffset,
+            realPayloadOffset + realLen,
+          );
           // Only accept if the candidate parses as valid protobuf.
           if (tryParseFields(candidatePayload) !== null) {
             return {
@@ -707,7 +816,7 @@
               payload: candidatePayload,
               prefix: responseBytes.slice(0, markerIdx),
               markerAndLen: responseBytes.slice(markerIdx, realPayloadOffset),
-              suffix: responseBytes.slice(realPayloadOffset + realLen)
+              suffix: responseBytes.slice(realPayloadOffset + realLen),
             };
           }
         }
@@ -718,7 +827,7 @@
     if (looksLikeAppleWLocPayload(responseBytes)) {
       return {
         kind: "bare",
-        payload: responseBytes
+        payload: responseBytes,
       };
     }
 
@@ -746,7 +855,7 @@
       payload: patched.payload,
       wifiCount: patched.wifiCount,
       cellCount: patched.cellCount,
-      arpc: arpc
+      arpc: arpc,
     };
   }
 
@@ -764,7 +873,7 @@
         appIdentifier: extraction.arpc.appIdentifier,
         osVersion: extraction.arpc.osVersion,
         functionId: extraction.arpc.functionId,
-        payload: patched.payload
+        payload: patched.payload,
       };
       response = serializeArpc(arpcOut);
     } else if (extraction.kind === "marker") {
@@ -775,7 +884,7 @@
         extraction.markerAndLen.slice(0, APPLE_WLOC_MARKER.length),
         newLenBytes,
         patched.payload,
-        extraction.suffix
+        extraction.suffix,
       ]);
     } else {
       // synthetic / bare – use the simple prefix format.
@@ -788,7 +897,7 @@
       wifiCount: patched.wifiCount,
       cellCount: patched.cellCount,
       kind: extraction.kind,
-      prefix: extraction.prefix ? hexPreview(extraction.prefix, 8) : ""
+      prefix: extraction.prefix ? hexPreview(extraction.prefix, 8) : "",
     };
   }
 
@@ -817,7 +926,7 @@
       "dumpRaw",
       "dumpHeaders",
       "prepareHeaders",
-      "rawLimit"
+      "rawLimit",
     ];
     var configUrlKey = "configUrl=";
     var configUrlIdx = argument.indexOf(configUrlKey);
@@ -839,7 +948,8 @@
       } catch (err) {
         result.configUrl = configUrlValue;
       }
-      argument = argument.slice(0, configUrlIdx) + (end >= 0 ? tail.slice(end + 1) : "");
+      argument =
+        argument.slice(0, configUrlIdx) + (end >= 0 ? tail.slice(end + 1) : "");
     }
 
     var pairs = argument.split(/[&;]/);
@@ -866,7 +976,9 @@
     if (direct) {
       return direct;
     }
-    var host = String(args.configHost || "").trim().replace(/\/+$/, "");
+    var host = String(args.configHost || "")
+      .trim()
+      .replace(/\/+$/, "");
     var token = String(args.configToken || "").trim();
     if (host && token) {
       return host + "/loc.json?token=" + encodeURIComponent(token);
@@ -903,7 +1015,7 @@
       "configHost",
       "configToken",
       "configUrl",
-      "debug"
+      "debug",
     ];
     var i;
     args = args || {};
@@ -958,12 +1070,16 @@
         ", lng=" +
         args.longitude +
         ", configUrl=" +
-        (resolveConfigUrl(args) || "<none>")
+        (resolveConfigUrl(args) || "<none>"),
     );
   }
 
   function detectRuntime() {
-    if (typeof $environment !== "undefined" && $environment && $environment.product) {
+    if (
+      typeof $environment !== "undefined" &&
+      $environment &&
+      $environment.product
+    ) {
       return String($environment.product);
     }
     if (typeof $loon !== "undefined") {
@@ -1013,22 +1129,25 @@
       encodeURIComponent(String(lat)) +
       "&longitude=" +
       encodeURIComponent(String(lng));
-    $httpClient.get({ url: url, timeout: 4000 }, function (error, response, body) {
-      if (error || !body) {
-        callback(null);
-        return;
-      }
-      try {
-        var data = JSON.parse(body);
-        if (data && data.elevation && data.elevation.length) {
-          callback(Math.round(Number(data.elevation[0])));
+    $httpClient.get(
+      { url: url, timeout: 4000 },
+      function (error, response, body) {
+        if (error || !body) {
+          callback(null);
           return;
         }
-      } catch (err) {
-        // ignore parse failures
-      }
-      callback(null);
-    });
+        try {
+          var data = JSON.parse(body);
+          if (data && data.elevation && data.elevation.length) {
+            callback(Math.round(Number(data.elevation[0])));
+            return;
+          }
+        } catch (err) {
+          // ignore parse failures
+        }
+        callback(null);
+      },
+    );
   }
 
   function geocodeAddress(address, debug, callback) {
@@ -1039,9 +1158,21 @@
     }
 
     var cached = readGeocodeCache();
-    if (cached && cached.address === query && Number.isFinite(Number(cached.latitude)) && Number.isFinite(Number(cached.longitude))) {
+    if (
+      cached &&
+      cached.address === query &&
+      Number.isFinite(Number(cached.latitude)) &&
+      Number.isFinite(Number(cached.longitude))
+    ) {
       if (debug) {
-        console.log("Location spoofer geocode cache hit: " + query + " -> " + cached.latitude + "," + cached.longitude);
+        console.log(
+          "Location spoofer geocode cache hit: " +
+            query +
+            " -> " +
+            cached.latitude +
+            "," +
+            cached.longitude,
+        );
       }
       callback(cached);
       return;
@@ -1049,7 +1180,9 @@
 
     if (typeof $httpClient === "undefined" || !$httpClient.get) {
       if (debug) {
-        console.log("Location spoofer geocode skipped: $httpClient unavailable");
+        console.log(
+          "Location spoofer geocode skipped: $httpClient unavailable",
+        );
       }
       callback(null);
       return;
@@ -1062,12 +1195,14 @@
       {
         url: url,
         timeout: 8000,
-        headers: { "User-Agent": "ios-location-spoofer/1.0 (Loon plugin)" }
+        headers: { "User-Agent": "ios-location-spoofer/1.0 (Loon plugin)" },
       },
       function (error, response, body) {
         if (error || !body) {
           if (debug) {
-            console.log("Location spoofer geocode failed: " + (error || "empty body"));
+            console.log(
+              "Location spoofer geocode failed: " + (error || "empty body"),
+            );
           }
           callback(null);
           return;
@@ -1092,7 +1227,7 @@
             address: query,
             latitude: lat,
             longitude: lng,
-            displayName: hit.display_name || query
+            displayName: hit.display_name || query,
           };
           fetchElevation(lat, lng, function (altitude) {
             if (altitude != null) {
@@ -1107,18 +1242,20 @@
                   lat +
                   "," +
                   lng +
-                  (altitude != null ? ", alt=" + altitude : "")
+                  (altitude != null ? ", alt=" + altitude : ""),
               );
             }
             callback(entry);
           });
         } catch (err) {
           if (debug) {
-            console.log("Location spoofer geocode parse failed: " + err.message);
+            console.log(
+              "Location spoofer geocode parse failed: " + err.message,
+            );
           }
           callback(null);
         }
-      }
+      },
     );
   }
 
@@ -1168,7 +1305,7 @@
       "dumpRaw",
       "dumpHeaders",
       "prepareHeaders",
-      "rawLimit"
+      "rawLimit",
     ];
 
     if (args.config) {
@@ -1187,7 +1324,11 @@
   }
 
   function readRemoteConfigCache(url) {
-    if (!url || typeof $persistentStore === "undefined" || !$persistentStore.read) {
+    if (
+      !url ||
+      typeof $persistentStore === "undefined" ||
+      !$persistentStore.read
+    ) {
       return null;
     }
     try {
@@ -1209,13 +1350,17 @@
   }
 
   function writeRemoteConfigCache(url, data) {
-    if (!url || typeof $persistentStore === "undefined" || !$persistentStore.write) {
+    if (
+      !url ||
+      typeof $persistentStore === "undefined" ||
+      !$persistentStore.write
+    ) {
       return;
     }
     try {
       $persistentStore.write(
         "location_spoofer_remote_cfg",
-        JSON.stringify({ url: url, data: data, ts: Date.now() })
+        JSON.stringify({ url: url, data: data, ts: Date.now() }),
       );
     } catch (err) {
       // ignore cache write failures
@@ -1227,17 +1372,20 @@
       callback(null, "http client unavailable");
       return;
     }
-    $httpClient.get({ url: url, timeout: timeout || 3000 }, function (error, response, body) {
-      if (error || !body) {
-        callback(null, error || "empty body");
-        return;
-      }
-      try {
-        callback(JSON.parse(body), null);
-      } catch (err) {
-        callback(null, err.message);
-      }
-    });
+    $httpClient.get(
+      { url: url, timeout: timeout || 3000 },
+      function (error, response, body) {
+        if (error || !body) {
+          callback(null, error || "empty body");
+          return;
+        }
+        try {
+          callback(JSON.parse(body), null);
+        } catch (err) {
+          callback(null, err.message);
+        }
+      },
+    );
   }
 
   function refreshRemoteConfigCache(url, debug) {
@@ -1257,7 +1405,12 @@
       return;
     }
     var cached = readGeocodeCache();
-    if (cached && cached.address === address && Number.isFinite(Number(cached.latitude)) && Number.isFinite(Number(cached.longitude))) {
+    if (
+      cached &&
+      cached.address === address &&
+      Number.isFinite(Number(cached.latitude)) &&
+      Number.isFinite(Number(cached.longitude))
+    ) {
       cfg.latitude = cached.latitude;
       cfg.longitude = cached.longitude;
       if (cached.altitude != null) {
@@ -1269,7 +1422,11 @@
       return;
     }
     if (debug) {
-      console.log("Location spoofer geocode cache miss: " + address + " (use manual lat/lng until cron refreshes)");
+      console.log(
+        "Location spoofer geocode cache miss: " +
+          address +
+          " (use manual lat/lng until cron refreshes)",
+      );
     }
   }
 
@@ -1291,7 +1448,7 @@
             "Location spoofer remote config cache hit -> " +
               remoteCfg.latitude +
               "," +
-              remoteCfg.longitude
+              remoteCfg.longitude,
           );
         }
       }
@@ -1311,9 +1468,19 @@
         callback(normalizeConfig(cfg));
       } catch (err) {
         if (debug) {
-          console.log("Location spoofer config invalid: " + err.message + " | cfg lat/lng=" + cfg.latitude + "," + cfg.longitude);
+          console.log(
+            "Location spoofer config invalid: " +
+              err.message +
+              " | cfg lat/lng=" +
+              cfg.latitude +
+              "," +
+              cfg.longitude,
+          );
         }
-        if (!Number.isFinite(Number(cfg.latitude)) || !Number.isFinite(Number(cfg.longitude))) {
+        if (
+          !Number.isFinite(Number(cfg.latitude)) ||
+          !Number.isFinite(Number(cfg.longitude))
+        ) {
           cfg.latitude = DEFAULT_CONFIG.latitude;
           cfg.longitude = DEFAULT_CONFIG.longitude;
         }
@@ -1343,11 +1510,18 @@
         cfg = mergeConfig(cfg, data);
         if (debug) {
           console.log(
-            "Location spoofer remote config loaded -> " + data.latitude + "," + data.longitude
+            "Location spoofer remote config loaded -> " +
+              data.latitude +
+              "," +
+              data.longitude,
           );
         }
       } else if (debug) {
-        console.log("Location spoofer remote config fetch failed: " + err + " (using manual lat/lng)");
+        console.log(
+          "Location spoofer remote config fetch failed: " +
+            err +
+            " (using manual lat/lng)",
+        );
       }
       finish();
     });
@@ -1373,7 +1547,10 @@
           writeRemoteConfigCache(configUrl, data);
           if (debug) {
             console.log(
-              "Location spoofer config cron cached -> " + data.latitude + "," + data.longitude
+              "Location spoofer config cron cached -> " +
+                data.latitude +
+                "," +
+                data.longitude,
             );
           }
         } else if (debug) {
@@ -1407,7 +1584,11 @@
     for (key in sourceHeaders) {
       if (Object.prototype.hasOwnProperty.call(sourceHeaders, key)) {
         var lower = key.toLowerCase();
-        if (lower !== "content-length" && lower !== "content-encoding" && lower !== "transfer-encoding") {
+        if (
+          lower !== "content-length" &&
+          lower !== "content-encoding" &&
+          lower !== "transfer-encoding"
+        ) {
           headers[key] = sourceHeaders[key];
         }
       }
@@ -1422,7 +1603,10 @@
     var lower = name.toLowerCase();
     var existingKey = null;
     for (var key in headers) {
-      if (Object.prototype.hasOwnProperty.call(headers, key) && key.toLowerCase() === lower) {
+      if (
+        Object.prototype.hasOwnProperty.call(headers, key) &&
+        key.toLowerCase() === lower
+      ) {
         existingKey = key;
         break;
       }
@@ -1436,9 +1620,11 @@
   }
 
   function donePreparedRequestPassThrough() {
-    var headers = prepareRequestHeaders((typeof $request !== "undefined" && $request.headers) || {});
+    var headers = prepareRequestHeaders(
+      (typeof $request !== "undefined" && $request.headers) || {},
+    );
     $done({
-      headers: headers
+      headers: headers,
     });
   }
 
@@ -1453,18 +1639,32 @@
       return body;
     }
     try {
-      if (enc.indexOf("gzip") >= 0 && typeof $utils !== "undefined" && $utils.ungzip) {
+      if (
+        enc.indexOf("gzip") >= 0 &&
+        typeof $utils !== "undefined" &&
+        $utils.ungzip
+      ) {
         return $utils.ungzip(body);
       }
-      if (enc.indexOf("deflate") >= 0 && typeof $utils !== "undefined" && $utils.inflate) {
+      if (
+        enc.indexOf("deflate") >= 0 &&
+        typeof $utils !== "undefined" &&
+        $utils.inflate
+      ) {
         return $utils.inflate(body);
       }
-      if (enc.indexOf("br") >= 0 && typeof $utils !== "undefined" && $utils.brotliDecompress) {
+      if (
+        enc.indexOf("br") >= 0 &&
+        typeof $utils !== "undefined" &&
+        $utils.brotliDecompress
+      ) {
         return $utils.brotliDecompress(body);
       }
     } catch (err) {
       if (typeof console !== "undefined") {
-        console.log("Location spoofer decompress failed (" + enc + "): " + err.message);
+        console.log(
+          "Location spoofer decompress failed (" + enc + "): " + err.message,
+        );
       }
     }
     return body;
@@ -1473,7 +1673,9 @@
   function prepareResponseBodySync(config) {
     var respHeaders = ($response && $response.headers) || {};
     var contentEncoding = headerValue(respHeaders, "Content-Encoding");
-    var rawRespBody = $response && ($response.body != null ? $response.body : $response.bodyBytes);
+    var rawRespBody =
+      $response &&
+      ($response.body != null ? $response.body : $response.bodyBytes);
     logHttpDump("response-wire-original", $response, config);
     logRawDump("response-wire-original", bodyToBytes(rawRespBody), config);
 
@@ -1482,12 +1684,24 @@
       return;
     }
 
-    if (isGzipBytes(bytes) || (contentEncoding && String(contentEncoding).toLowerCase().indexOf("gzip") >= 0)) {
-      var decoded = bodyToBytes(decompressBody(rawRespBody, contentEncoding || "gzip"));
+    if (
+      isGzipBytes(bytes) ||
+      (contentEncoding &&
+        String(contentEncoding).toLowerCase().indexOf("gzip") >= 0)
+    ) {
+      var decoded = bodyToBytes(
+        decompressBody(rawRespBody, contentEncoding || "gzip"),
+      );
       if (decoded && decoded.length > 2 && !isGzipBytes(decoded)) {
         $response.body = decoded;
         if (config.debug) {
-          console.log("Location spoofer decompressed body: " + bytes.length + " -> " + decoded.length + " bytes");
+          console.log(
+            "Location spoofer decompressed body: " +
+              bytes.length +
+              " -> " +
+              decoded.length +
+              " bytes",
+          );
         }
         return;
       }
@@ -1495,7 +1709,7 @@
         console.log(
           "Location spoofer gzip body still compressed (len=" +
             bytes.length +
-            "); ensure http-request prepare script is enabled"
+            "); ensure http-request prepare script is enabled",
         );
       }
       return;
@@ -1515,7 +1729,10 @@
     }
     var lower = name.toLowerCase();
     for (var key in headers) {
-      if (Object.prototype.hasOwnProperty.call(headers, key) && key.toLowerCase() === lower) {
+      if (
+        Object.prototype.hasOwnProperty.call(headers, key) &&
+        key.toLowerCase() === lower
+      ) {
         return headers[key];
       }
     }
@@ -1569,7 +1786,8 @@
     var counts = {};
     var order = [];
     for (var i = 0; i < fields.length; i += 1) {
-      var key = String(fields[i].fieldNumber) + "/" + String(fields[i].wireType);
+      var key =
+        String(fields[i].fieldNumber) + "/" + String(fields[i].wireType);
       if (!counts[key]) {
         counts[key] = 0;
         order.push(key);
@@ -1614,7 +1832,7 @@
         "cellReq=" + countFields(fields, 25),
         "hasCounts=" + (countFields(fields, 3) + "/" + countFields(fields, 4)),
         "deviceType=" + countFields(fields, 33),
-        patchedPayloadSummary(payload)
+        patchedPayloadSummary(payload),
       ];
       return parts.join(", ");
     } catch (err) {
@@ -1627,14 +1845,35 @@
       return;
     }
     var limit = config.rawLimit || 0;
-    var emitted = limit > 0 && bytes.length > limit ? bytes.slice(0, limit) : bytes;
+    var emitted =
+      limit > 0 && bytes.length > limit ? bytes.slice(0, limit) : bytes;
     var encoded = bytesToBase64(emitted);
     var chunkSize = 3000;
     var chunks = Math.max(1, Math.ceil(encoded.length / chunkSize));
-    console.log("Location spoofer raw " + label + " base64 begin: len=" + bytes.length + ", emitted=" + emitted.length + ", chunks=" + chunks + ", truncated=" + (emitted.length !== bytes.length));
+    console.log(
+      "Location spoofer raw " +
+        label +
+        " base64 begin: len=" +
+        bytes.length +
+        ", emitted=" +
+        emitted.length +
+        ", chunks=" +
+        chunks +
+        ", truncated=" +
+        (emitted.length !== bytes.length),
+    );
     for (var i = 0; i < encoded.length; i += chunkSize) {
       var chunkIndex = Math.floor(i / chunkSize) + 1;
-      console.log("Location spoofer raw " + label + " base64 chunk " + chunkIndex + "/" + chunks + ": " + encoded.slice(i, i + chunkSize));
+      console.log(
+        "Location spoofer raw " +
+          label +
+          " base64 chunk " +
+          chunkIndex +
+          "/" +
+          chunks +
+          ": " +
+          encoded.slice(i, i + chunkSize),
+      );
     }
     console.log("Location spoofer raw " + label + " base64 end");
   }
@@ -1656,9 +1895,23 @@
     var method = message.method || request.method || "<none>";
     var url = message.url || request.url || "<none>";
     var status = message.status || message.statusCode || "<none>";
-    console.log("Location spoofer raw " + label + " meta: method=" + method + ", url=" + url + ", status=" + status);
+    console.log(
+      "Location spoofer raw " +
+        label +
+        " meta: method=" +
+        method +
+        ", url=" +
+        url +
+        ", status=" +
+        status,
+    );
     if (config.dumpHeaders) {
-      console.log("Location spoofer raw " + label + " headers: " + jsonString(message.headers || {}));
+      console.log(
+        "Location spoofer raw " +
+          label +
+          " headers: " +
+          jsonString(message.headers || {}),
+      );
     }
   }
 
@@ -1667,17 +1920,39 @@
       console.log("Location spoofer inspect response body unavailable");
       return;
     }
-    console.log("Location spoofer inspect response body: len=" + bytes.length + ", head=" + hexPreview(bytes, 48));
+    console.log(
+      "Location spoofer inspect response body: len=" +
+        bytes.length +
+        ", head=" +
+        hexPreview(bytes, 48),
+    );
     logRawDump("response", bytes, config);
     try {
       var extraction = extractAppleWLocPayload(bytes);
-      console.log("Location spoofer inspect response extraction: kind=" + extraction.kind + ", prefix=" + (extraction.prefix ? hexPreview(extraction.prefix, 8) : "<none>") + ", payloadLen=" + extraction.payload.length + ", suffixLen=" + (extraction.suffix ? extraction.suffix.length : 0));
-      console.log("Location spoofer inspect response payload: " + appleWLocPayloadInspect(extraction.payload));
+      console.log(
+        "Location spoofer inspect response extraction: kind=" +
+          extraction.kind +
+          ", prefix=" +
+          (extraction.prefix ? hexPreview(extraction.prefix, 8) : "<none>") +
+          ", payloadLen=" +
+          extraction.payload.length +
+          ", suffixLen=" +
+          (extraction.suffix ? extraction.suffix.length : 0),
+      );
+      console.log(
+        "Location spoofer inspect response payload: " +
+          appleWLocPayloadInspect(extraction.payload),
+      );
     } catch (err) {
-      console.log("Location spoofer inspect response extraction failed: " + err.message);
+      console.log(
+        "Location spoofer inspect response extraction failed: " + err.message,
+      );
       var directFields = tryParseFields(bytes);
       if (directFields) {
-        console.log("Location spoofer inspect response direct fields: " + fieldHistogram(directFields));
+        console.log(
+          "Location spoofer inspect response direct fields: " +
+            fieldHistogram(directFields),
+        );
       }
     }
   }
@@ -1687,17 +1962,43 @@
       console.log("Location spoofer inspect request body unavailable");
       return;
     }
-    console.log("Location spoofer inspect request body: len=" + bytes.length + ", head=" + hexPreview(bytes, 48));
+    console.log(
+      "Location spoofer inspect request body: len=" +
+        bytes.length +
+        ", head=" +
+        hexPreview(bytes, 48),
+    );
     logRawDump("request", bytes, config);
     try {
       var arpc = parseArpc(bytes);
-      console.log("Location spoofer inspect request arpc: version=" + arpc.version + ", functionId=" + arpc.functionId + ", locale=" + arpc.locale + ", app=" + arpc.appIdentifier + ", os=" + arpc.osVersion + ", payloadLen=" + arpc.payload.length);
-      console.log("Location spoofer inspect request payload: " + appleWLocPayloadInspect(arpc.payload));
+      console.log(
+        "Location spoofer inspect request arpc: version=" +
+          arpc.version +
+          ", functionId=" +
+          arpc.functionId +
+          ", locale=" +
+          arpc.locale +
+          ", app=" +
+          arpc.appIdentifier +
+          ", os=" +
+          arpc.osVersion +
+          ", payloadLen=" +
+          arpc.payload.length,
+      );
+      console.log(
+        "Location spoofer inspect request payload: " +
+          appleWLocPayloadInspect(arpc.payload),
+      );
     } catch (err) {
-      console.log("Location spoofer inspect request arpc failed: " + err.message);
+      console.log(
+        "Location spoofer inspect request arpc failed: " + err.message,
+      );
       var directFields = tryParseFields(bytes);
       if (directFields) {
-        console.log("Location spoofer inspect request direct fields: " + fieldHistogram(directFields));
+        console.log(
+          "Location spoofer inspect request direct fields: " +
+            fieldHistogram(directFields),
+        );
       }
     }
   }
@@ -1721,11 +2022,44 @@
     var response = typeof $response !== "undefined" ? $response : {};
     var headers = response.headers || {};
     if (config.debug) {
-      console.log("Location spoofer probe response keys: " + objectKeys(response));
-      console.log("Location spoofer probe headers: status=" + (response.status || response.statusCode || "<none>") + ", content-length=" + (headerValue(headers, "Content-Length") || "<none>") + ", content-type=" + (headerValue(headers, "Content-Type") || "<none>") + ", content-encoding=" + (headerValue(headers, "Content-Encoding") || "none"));
-      console.log("Location spoofer probe body slots: body=" + valueType(response.body) + "/" + valueLength(response.body) + ", bodyBytes=" + valueType(response.bodyBytes) + "/" + valueLength(response.bodyBytes) + ", rawBody=" + valueType(response.rawBody) + "/" + valueLength(response.rawBody) + ", binaryBody=" + valueType(response.binaryBody) + "/" + valueLength(response.binaryBody));
+      console.log(
+        "Location spoofer probe response keys: " + objectKeys(response),
+      );
+      console.log(
+        "Location spoofer probe headers: status=" +
+          (response.status || response.statusCode || "<none>") +
+          ", content-length=" +
+          (headerValue(headers, "Content-Length") || "<none>") +
+          ", content-type=" +
+          (headerValue(headers, "Content-Type") || "<none>") +
+          ", content-encoding=" +
+          (headerValue(headers, "Content-Encoding") || "none"),
+      );
+      console.log(
+        "Location spoofer probe body slots: body=" +
+          valueType(response.body) +
+          "/" +
+          valueLength(response.body) +
+          ", bodyBytes=" +
+          valueType(response.bodyBytes) +
+          "/" +
+          valueLength(response.bodyBytes) +
+          ", rawBody=" +
+          valueType(response.rawBody) +
+          "/" +
+          valueLength(response.rawBody) +
+          ", binaryBody=" +
+          valueType(response.binaryBody) +
+          "/" +
+          valueLength(response.binaryBody),
+      );
       var bytes = messageBodyToBytes(response);
-      console.log("Location spoofer probe selected body: " + (bytes ? bytes.length : 0) + " bytes, head=" + (bytes ? hexPreview(bytes, 32) : "<none>"));
+      console.log(
+        "Location spoofer probe selected body: " +
+          (bytes ? bytes.length : 0) +
+          " bytes, head=" +
+          (bytes ? hexPreview(bytes, 32) : "<none>"),
+      );
     }
     donePassThrough();
   }
@@ -1740,7 +2074,7 @@
       $done({
         status: 200,
         headers: headers,
-        body: bytes
+        body: bytes,
       });
       return;
     }
@@ -1748,32 +2082,34 @@
       response: {
         status: 200,
         headers: headers,
-        body: bytes
-      }
+        body: bytes,
+      },
     });
   }
 
   function doneRewriteResponse(bytes, info) {
-    var sourceHeaders = typeof $response !== "undefined" ? $response.headers : {};
+    var sourceHeaders =
+      typeof $response !== "undefined" ? $response.headers : {};
     var headers = headersWithBinaryBody(sourceHeaders, bytes.length);
     if (info && info.debug) {
       headers["X-Location-Spoofer-Wifi-Count"] = String(info.wifiCount);
       headers["X-Location-Spoofer-Cell-Count"] = String(info.cellCount || 0);
     }
     if (info && info.targetLat != null && info.targetLng != null) {
-      headers["X-Location-Spoofer-Target"] = String(info.targetLat) + "," + String(info.targetLng);
+      headers["X-Location-Spoofer-Target"] =
+        String(info.targetLat) + "," + String(info.targetLng);
     }
     if (isLoonRuntime()) {
       $done({
         status: ($response && $response.status) || 200,
         headers: headers,
-        body: bytes
+        body: bytes,
       });
       return;
     }
     $done({
       headers: headers,
-      body: bytes
+      body: bytes,
     });
   }
 
@@ -1785,14 +2121,19 @@
           "Location spoofer response body too short: " +
             (responseBody ? responseBody.length : 0) +
             " bytes, head=" +
-            (responseBody ? hexPreview(responseBody) : "<none>")
+            (responseBody ? hexPreview(responseBody) : "<none>"),
         );
       }
       donePassThrough();
       return;
     }
     if (config.debug) {
-      console.log("Location spoofer response body: " + responseBody.length + " bytes, head=" + hexPreview(responseBody, 32));
+      console.log(
+        "Location spoofer response body: " +
+          responseBody.length +
+          " bytes, head=" +
+          hexPreview(responseBody, 32),
+      );
       if (isLoonRuntime()) {
         console.log("Location spoofer runtime: Loon");
       }
@@ -1812,9 +2153,12 @@
           (responseResult.prefix || "<none>") +
           ", response=" +
           responseResult.response.length +
-          " bytes"
+          " bytes",
       );
-      console.log("Location spoofer patched locations: " + patchedPayloadSummary(responseResult.payload));
+      console.log(
+        "Location spoofer patched locations: " +
+          patchedPayloadSummary(responseResult.payload),
+      );
     }
     logRawDump("response-patched", responseResult.response, config);
     doneRewriteResponse(responseResult.response, {
@@ -1822,7 +2166,7 @@
       cellCount: responseResult.cellCount,
       debug: config.debug,
       targetLat: config.latitude,
-      targetLng: config.longitude
+      targetLng: config.longitude,
     });
   }
 
@@ -1868,7 +2212,7 @@
                 ", lng=" +
                 config.longitude +
                 ", url=" +
-                (($request && $request.url) || "<none>")
+                (($request && $request.url) || "<none>"),
             );
           }
           if (config.mode === "probe") {
@@ -1890,7 +2234,10 @@
         }
         var requestBody = messageBodyToBytes($request);
         if (config.debug) {
-          console.log("Location spoofer request mode body length: " + (requestBody ? requestBody.length : 0));
+          console.log(
+            "Location spoofer request mode body length: " +
+              (requestBody ? requestBody.length : 0),
+          );
         }
         if (!requestBody) {
           if (config.debug) {
@@ -1901,7 +2248,12 @@
         }
         if (requestBody.length < 2) {
           if (config.debug) {
-            console.log("Location spoofer request body too short: " + requestBody.length + " bytes, head=" + hexPreview(requestBody));
+            console.log(
+              "Location spoofer request body too short: " +
+                requestBody.length +
+                " bytes, head=" +
+                hexPreview(requestBody),
+            );
           }
           donePassThrough();
           return;
@@ -1910,19 +2262,43 @@
         logRawDump("request-original", requestBody, config);
         var requestResult = spoofArpcRequest(requestBody, config);
         if (config.debug) {
-          console.log("Location spoofer request synthetic response: patched " + requestResult.wifiCount + " wifi devices, " + requestResult.cellCount + " cell towers, response=" + requestResult.response.length + " bytes");
-          console.log("Location spoofer patched locations: " + patchedPayloadSummary(requestResult.payload));
+          console.log(
+            "Location spoofer request synthetic response: patched " +
+              requestResult.wifiCount +
+              " wifi devices, " +
+              requestResult.cellCount +
+              " cell towers, response=" +
+              requestResult.response.length +
+              " bytes",
+          );
+          console.log(
+            "Location spoofer patched locations: " +
+              patchedPayloadSummary(requestResult.payload),
+          );
         }
-        logRawDump("request-synthetic-response", requestResult.response, config);
+        logRawDump(
+          "request-synthetic-response",
+          requestResult.response,
+          config,
+        );
         doneSyntheticResponse(requestResult.response, {
           wifiCount: requestResult.wifiCount,
           cellCount: requestResult.cellCount,
-          debug: config.debug
+          debug: config.debug,
         });
       } catch (err) {
         if (config.debug) {
-          var diagBody = hasResponse ? messageBodyToBytes($response) : messageBodyToBytes($request);
-          console.log("Location spoofer failed: " + err.message + " | bodyLen=" + (diagBody ? diagBody.length : 0) + " head=" + (diagBody ? hexPreview(diagBody, 32) : "<none>"));
+          var diagBody = hasResponse
+            ? messageBodyToBytes($response)
+            : messageBodyToBytes($request);
+          console.log(
+            "Location spoofer failed: " +
+              err.message +
+              " | bodyLen=" +
+              (diagBody ? diagBody.length : 0) +
+              " head=" +
+              (diagBody ? hexPreview(diagBody, 32) : "<none>"),
+          );
         }
         if (config.failOpen !== false) {
           donePassThrough();
@@ -1932,8 +2308,8 @@
           response: {
             status: "HTTP/1.1 500 Internal Server Error",
             headers: { "Content-Type": "text/plain" },
-            body: "location spoofer failed: " + err.message
-          }
+            body: "location spoofer failed: " + err.message,
+          },
         });
       }
     });
@@ -1977,7 +2353,7 @@
     parseArgumentString: parseArgumentString,
     readScriptArguments: readScriptArguments,
     geocodeAddress: geocodeAddress,
-    prepareRequestHeaders: prepareRequestHeaders
+    prepareRequestHeaders: prepareRequestHeaders,
   };
 
   if (typeof module !== "undefined" && module.exports) {
@@ -1985,4 +2361,4 @@
   } else {
     runShadowrocket();
   }
-}());
+})();
