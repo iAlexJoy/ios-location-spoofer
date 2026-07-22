@@ -21,5 +21,5 @@ http:
 
 script-providers:
   ios-location-spoofer:
-    url: https://raw.githubusercontent.com/duyvinh09/Module_IOS/main/js/location-spoofer.js
+    url: https://raw.githubusercontent.com/kun775/ios-location-spoofer/main/location-spoofer.js
     interval: 86400
